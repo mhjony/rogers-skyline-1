@@ -1,0 +1,4 @@
+701cc59511f6fe587708366598cda1b215e1048d  -
+
+go to goinfre folder and run this command
+> shasum < $disk_name.vdi
