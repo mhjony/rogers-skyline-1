@@ -1,0 +1,466 @@
+-----------------------------Deployment-------------------------
+Install Debian on VM
+with standard settings
+On this virtual machine settings are:
+root user: root
+password: 1
+Non root user: mhasan
+password: 1
+change network settings to bridged adapter
+
+login to debian using your root creditials
+
+--------------------------Update and install package------------------
+> apt-get update -y && apt-get upgrade -y
+> apt-get install sudo vim ufw portsentry fail2ban apache2 mailutils -y
+
+------------------------- Configure sudo-------------------------
+Inorder to get special rights my mhasan user I need to edit /etc/sudoers file.
+
+use command "vim /etc/sudoers" and add this line after root
+
+///add the following line
+
+mhasan	ALL=(ALL:ALL) NOPASSWD:ALL
+
+///end of line
+
+------------ Setup static IP ---------
+check current setting using "cat /etc/network/interfaces"
+
+The output should look like this:
+//////start output
+
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+source /etc/network/interfaces.d/*
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+# The primary network interface
+allow-hotplug enp0s3
+iface enp0s3 inet dhcp
+
+//////end output
+
+Now, remove the last line and change "allow-hotplug" to "auto"
+
+create a file and edit "/etc/network/interfaces.d/enp0s3" with:
+
+> sudo vim /etc/network/interfaces.d/enp0s3
+
+///content start
+iface enp0s3 inet static
+	address 10.13.200.247
+	netmask	255.255.255.252
+	gateway	10.13.254.254
+///content end
+
+Now, restart the network service to make changes:
+> sudo service networking restart
+
+check your ip now:
+> ip a
+
+connect the SSH service in remote terminal:
+> ssh mhasan@10.13.200.247
+
+-----------change SSH default port-------------
+
+> sudo vim /etc/ssh/sshd_config
+
+Change line "Port 22" to "Port 54321" and if this line has "#" take it away
+
+Port numbers are assigned in various ways, based on three ranges: System Ports (0-1023) this is forbidden to use, User Ports (1024-49151) this should be avoided as well, and the Dynamic and/or Private Ports (49152-65535) this range can be used;
+available information here: https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml
+
+Restart the sshd services
+
+> sudo service sshd restart
+
+Now we can connect to remote terminal with this port number:
+
+> ssh mhasan@10.13.200.247 -p 54321
+
+----------SSH access with publickeys----------------
+
+Generate a public/private rsa key pair, on the host machine (in terminal of our local machine, outside of virtual machine)
+
+we can check if there is already rsa_key exists or not in our host computer (command > ls ~/.ssh/id_rsa*)
+
+> ssh-keygen -t rsa
+
+This command will generate 2 files id_rsa and id_rsa.pub
+id_rsa: This is private key, we should keep it safely, we can encrypt it with a password
+id_rsa.pub: Our public key, we have to transfer this one to the server. You can freely share your public key with others. if someone else adds your public key to their server, you will be able to log in to that server. 
+Source: https://www.linode.com/docs/security/authentication/use-public-key-authentication-with-ssh/#connect-to-the-remote-server
+-----------------
+
+Add public key to the server:
+
+> ssh-copy-id -i /Users/mhasan/.ssh/id_rsa.pub mhasan@10.13.200.247 -p 54321
+
+The public key is automatically added in "~/.ssh/authorized_keys" on the server.
+------------------
+
+Now we need to  disable password authentication and login:
+
+>sudo vim /etc/ssh/sshd_config
+
+change line 32,37,56. It should look like this
+
+////
+#PermitRootLogin prohibit-password
+#PasswordAuthentication yes
+#PubkeyAuthentication yes
+////
+
+to 
+
+////
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+////
+
+Don't forget to remove "#" 
+-----------------------
+Restart the SSHD service
+
+>sudo service sshd restart
+
+No we are able to connect to the server via ssh with the public key wihtout typing in the password and login into the root will not be possible.
+
+> ssh mhasan@10.13.200.247 -p 54321
+
+we should use the password for private key. 
+ 
+---------------------------Set the rules for firewall-----------------------------
+
+First check firewall status using
+>sudo ufw status
+
+Now, allow incoming traffic to HTTPS, HTTP, ssh (our 54321 port)
+
+> sudo ufw enable
+> sudo ufw default deny incoming
+> sudo ufw default allow outgoing
+> sudo ufw allow 443
+> sudo ufw allow 80/tcp
+> sudo ufw allow 54321/tcp
+
+Here, 443 is HTTPS, 80/tcp is HTTP, and 54321 is SSH
+
+Now, restart ufw service:
+
+> sudo ufw reload
+
+Source: https://www.digitalocean.com/community/tutorials/how-to-setup-a-firewall-with-ufw-on-an-ubuntu-and-debian-cloud-server
+
+---------------------------set up DOS protection with failban------------------------------
+
+Check current rules:
+> service fail2ban status
+> sudo cat /etc/fail2ban/jail.d/defaults-debian.conf
+
+Add rules to local file to add to and override default rules
+, also local rules won't get overwritten when updated.
+
+Add the following to the /etc/fail2ban/jail.d/jail-debian.local by:
+>sudo vim /etc/fail2ban/jail.d/jail-debian.local
+################
+
+       [sshd]
+        enabled = true
+        port = 54321
+		logpath = %(sshd_log)s
+		backend = %(sshd_backend)s
+        maxretry = 3
+        findtime = 120
+        bantime = 600
+
+        [http-get-dos]
+        enabled = true
+        port = http,https
+        filter = http-get-dos
+		logpath = /var/log/apache2/access.log
+        maxretry = 100
+        findtime = 120
+        bantime = 600
+        action = iptables[name=HTTP, port=http, protocol=tcp]
+
+#################
+
+Add regex rules to http-get-dos:
+
+Create a file:
+> sudo touch /etc/fail2ban/filter.d/http-get-dos.conf
+
+And edit it :
+###########
+
+        [Definition]
+        failregex = ^<HOST> -.*"(GET|POST).*
+        ignoreregex = 
+
+############
+
+Regular expressions are used to detect break-in attempts,
+password failures, etc. Regular expressions are looked to
+see if they match the lines of the logfile.
+You can use the predefined entity <HOST> in your regexes.
+<HOST> is an alias for (?:::f{4,6}:)?(?P<host>\S+),
+which matches either a hostname or an IPv4 address
+(possibly embedded in an IPv6 address).
+
+Restart firewall and fail2ban
+
+> sudo ufw reload
+> sudo service fail2ban restart
+
+We can test if the new conf works with SlowLoris (an HTTP DDOS attack script)
+    install git: <<< sudo apt-get install git >>>
+    install SlowLoris: <<< git clone https://github.com/gkbrk/slowloris.git slowloris>>>
+    Go slowloris directory Run the program: python3 slowloris.py 10.13.200.247
+
+To check ban:
+> sudo cat /var/log/fail2ban.log
+
+----------------------------setting up protection agains port scans----------------------------
+
+First we need to install the nmap tool with <<< sudo apt-get install nmap >>>
+    Nmap is a free and open source netwokr discovery and security utility. It works
+    by ssending data packets on a specific target and by interpreting the incoming
+    packets to determine what ports are open or closed.
+    We get the following output if we run nmap:
+ > sudo nmap ip_address_of_machine_want_to_attack
+ > sudo nmap 10.13.200.247
+
+In standard mode portsentry runs in the background and reports any violations, in Stealth modes, PortSentry will use a raw socket to monitor all incoming packets, and if a monitored port is probed, it will block the host.  The most sensitive modes are those used by Advanced Stealth scan detection. You can explicitly ask PortSentry to ignore certain ports (which can be key when running a particularly reactionary configuration) to protect legitimate traffic. By default, PortSentry pays most attention to the first 1024 ports (otherwise known as privileged ports)because that’s where non-ephemeral connections usually originate from daemons.
+
+
+> sudo vim /etc/default/portsentry
+
+change tcp and udp to atcp and aupd (advanced) or overwrite with file resources/portsentry
+
+> sudo vim /etc/portsentry/portsentry.conf
+
+Ignore Options are:
+# 0 = Do not block UDP/TCP scans
+# 1 = Block UDP/TCP scans.
+# 2 = Run external command only (KILL_RUN_CMD)
+
+change
+"
+BLOCK_UDP="0"
+BLOCK_TCP="0"
+"
+
+to
+BLOCK_UDP="1"
+BLOCK_TCP="1"
+................
+
+we opt for a blocking of malicious persons through iptables.
+Comment the current KILL_ROUTE command and uncomment the following one:
+> KILL_ROUTE="/sbin/iptables -I INPUT -s $TARGET$ -j DROP"
+This will drop all packets originating from an attacker’s IP address and
+log future connection attempts.
+..................
+
+Comment this out:
+KILL_HOSTS_DENY="ALL: $TARGET$ : DENY
+So the SSH access is not denied.
+.................
+Now restart the portsentry service:
+> sudo service portsentry restart
+.................
+
+
+--------------------------Stop the services I don't need for this project----------------------------
+	In order to see, list of services those are enable
+	
+	> sudo systemctl list-unit-files --type=service | grep enabled
+...................
+	> sudo systemctl disable console-setup.service
+This package provides the console with the same keyboard configuration scheme as the X window system
+	> sudo systemctl disable keyboard-setup.service
+	> sudo systemctl disable syslog.service
+
+-------------------------------Update Packages with cron----------------------------------
+
+create log file
+> sudo touch /var/log/update_script.log
+> sudo chmod 777 /var/log/update_script.log
+
+Create and edit update.sh:
+> sudo vim update.sh
+
+Add:
+#########
+
+sudo apt-get update -y >> /var/log/update_script.log
+sudo apt-get upgrade -y >> /var/log/update_script.log
+
+#########
+
+Change file mode:
+> sudo chmod 755 update.sh
+
+Add task to cron:
+
+> sudo crontab -e
+Add:
+"@reboot sudo ~/update.sh
+0 4 * * 6 sudo ~/update.sh"
+
+Enable cron:
+> sudo systemctl enable cron
+
+------------------------------Monitor file change with cron-------------------------------
+Create and edit ~/cronmonitor.sh like:
+> vim ~/cronmonitor.sh
+
+//CONTENT
+#!/bin/bash
+
+FILE="/home/mhasan/crontab_monitor"
+FILE_TO_MONITOR="/etc/crontab"
+
+MD5=$(sudo md5sum $FILE_TO_MONITOR)
+
+if [ ! -f $FILE ]
+then
+	echo "$MD5" > $FILE
+	exit 0;
+fi;
+
+if [ "$MD5" != "$(sudo cat $FILE)" ]
+then
+	echo "$MD5" > $FILE
+	echo "$FILE_TO_MONITOR has been changed! 0_0! Be careful." | mail -s "$FILE_TO_MONITOR was changed!" root
+fi;
+//END OF CONTENT
+
+Change file mode
+> sudo chmod 755 cronmonitor.sh
+
+Add task to crontab:
+> sudo crontab -e
+0 0 * * * sudo /home/mhasan/cronmonitor.sh
+
+------------------------------Webpage deploying---------------------------------
+Now we need a web server. Web servers are used to serve web pages requested by clients computers. Here, we will use apache2 web server. 
+
+In order to see status of the apache2 web server, type following command
+
+> sudo systemctl status apache2
+
+in your browser type your ip:
+> 10.13.200.247
+
+if your ip doesn't work then restart apache server
+> sudo systemctl restart apache2
+
+if apache2 server works fine then type
+>sudo vim /var/www/html/index.html
+
+it will open index.html, now you can edit this .html file based on your webpage requirement. 
+
+--------------------------------SSL certificate-------------------------
+For this section this is the best article:
+https://www.digitalocean.com/community/tutorials/how-to-create-a-self-signed-ssl-certificate-for-apache-in-ubuntu-16-04
+
+> sudo mkdir -p /etc/ssl/localcerts
+
+> sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -out /etc/ssl/localcerts/apache.pem -keyout /etc/ssl/localcerts/apache.key
+
+> sudo ls -la /etc/ssl/localcerts/
+
+> sudo chmod 600 /etc/ssl/localcerts/apache*
+
+> sudo ls -la /etc/ssl/localcerts/
+
+> sudo vim /etc/apache2/conf-available/ssl-params.conf
+add the following content
+########
+
+SSLCipherSuite EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH
+SSLProtocol All -SSLv2 -SSLv3 -TLSv1 -TLSv1.1
+SSLHonorCipherOrder On
+
+Header always set X-Frame-Options DENY
+Header always set X-Content-Type-Options nosniff
+
+SSLCompression off
+SSLUseStapling on
+SSLStaplingCache "shmcb:logs/stapling-cache(150000)"
+
+SSLSessionTickets Off
+
+######
+add content from here: https://www.digitalocean.com/community/tutorials/how-to-create-a-self-signed-ssl-certificate-for-apache-in-ubuntu-16-04
+.....................
+
+> sudo vim /etc/apache2/sites-available/default-ssl.conf
+add the following content
+
+##############
+
+<IfModule mod_ssl.c>
+	<VirtualHost _default_:443>
+		ServerAdmin mhasan@student.hive.fi
+		ServerName	10.13.200.247
+
+		DocumentRoot /var/www/html
+
+		ErrorLog ${APACHE_LOG_DIR}/error.log
+		CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+		SSLEngine on
+
+		SSLCertificateFile	/etc/ssl/localcerts/apache.pem
+		SSLCertificateKeyFile /etc/ssl/localcerts/apache.key
+
+		<FilesMatch "\.(cgi|shtml|phtml|php)$">
+				SSLOptions +StdEnvVars
+		</FilesMatch>
+		<Directory /usr/lib/cgi-bin>
+				SSLOptions +StdEnvVars
+		</Directory>
+
+	</VirtualHost>
+ </IfModule>
+
+###########
+
+> sudo vim /etc/apache2/sites-available/000-default.conf
+redirect to your IP address
+
+#########
+
+<VirtualHost *:80>
+	ServerAdmin webmaster@localhost
+	DocumentRoot /var/www/html
+
+	Redirect permanent "/" "https://10.13.200.247/"
+
+	ErrorLog ${APACHE_LOG_DIR}/error.log
+	CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+ </VirtualHost>
+
+###########
+
+Load the new configurations
+> sudo a2enmod ssl <enter>
+> sudo a2enmod headers <enter>
+> sudo a2ensite default-ssl <enter>
+> sudo a2enconf ssl/params <enter>
+# Reload the apache 2
+>  systemctl reload apache2 <enter>
+
+------------------------------------------------------------
