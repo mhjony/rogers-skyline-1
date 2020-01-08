@@ -1,0 +1,61 @@
+#########  T O O L S  ##########
+# Check what is installed #
+# sudo apt list --installed
+#
+# Check size of harddrive and partiation #
+# sudo fdisk -l
+#
+# Check if OS packages are uptodate
+# sudo apt-get update
+#
+# Check user has sudo rights #
+# sudo cat /etc/sudoers
+#
+# Check DHCP service is changed to Static #
+# ip a
+# cat /etc/network/interfaces.d/enp0s3
+#
+# Change netmask #
+# vim /etc/network/interfaces.d/enp0s3
+# netmask 255.255.255.0
+# sudo /etc/init.d/networking restart
+#
+# Check the ports #
+# sudo netstat -tulpn | grep LISTEN
+# ssh root@10.13.200.247
+#
+# List all firewalls #
+# sudo ufw status
+#
+# Check active services #
+# sudo service --status-all
+#
+# Test DOS attack #
+# run slowloris
+# python3 slowloris.py 10.12.181.78
+# Check fail2ban.log that ip is banned
+# sudo cat /var/log/fail2ban.log
+#
+# Test nmap #
+# nmap 10.13.200.247
+#
+# Check Scripts
+# crontab -e
+# sudo cat /usr/local/sbin/update.sh
+# sudo vat /usr/local/sbin/change2crontab.sh
+#
+# Check SSL #
+# sudo cat /etc/apache2/sites-available/default-ssl.conf
+# sudo cat /etc/apache2/conf-available/ssl-params.conf
+# sudo cat /etc/apache2/sites-available/000-default.conf
+# sudo systemctl status apache2
+#
+# Check web package #
+# sudo apt list --installed | grep apache
+#
+# Check one active configuartion #
+# sudo cat /etc/apache2/sites-available/000-default.conf
+# sudo netstat -tulpn | grep LISTEN
+# run the 10.13.200.247 on web
+#
+# Deployment part #
